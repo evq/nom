@@ -774,3 +774,25 @@ impl ExtendInto for str {
     acc.push_str(self);
   }
 }
+
+/// abstract method to calculate the input length
+pub trait InputIsEmpty {
+  /// calculates the input length, as indicated by its name,
+  /// and the name of the trait itself
+  #[inline]
+  fn input_is_empty(&self) -> bool;
+}
+
+impl<'a, T> InputIsEmpty for &'a [T] {
+  #[inline]
+  fn input_is_empty(&self) -> bool {
+    self.is_empty()
+  }
+}
+
+impl<'a> InputIsEmpty for &'a str {
+  #[inline]
+  fn input_is_empty(&self) -> bool {
+    self.is_empty()
+  }
+}

@@ -220,6 +220,7 @@ macro_rules! escaped (
 
       let cl = || -> IResult<_,_,u32> {
         use $crate::Offset;
+        use $crate::InputIsEmpty;
         let mut index  = 0;
         let control_char = $control_char.as_char();
 
@@ -227,10 +228,10 @@ macro_rules! escaped (
           let remainder = $i.slice(index..);
           match $normal!(remainder, $($args)*) {
             Ok((i, _)) => {
-              if i.is_empty() {
+              if i.input_is_empty() {
                 return Ok(($i.slice($i.input_len()..), $i))
               } else {
-                index = $i.offset(i);
+                index = $i.offset(&i);
               }
             },
             Err(Err::Failure(e)) => {
@@ -249,10 +250,10 @@ macro_rules! escaped (
                 } else {
                   match $escapable!($i.slice(next..), $($args2)*) {
                     Ok((i,_)) => {
-                      if i.is_empty() {
+                      if i.input_is_empty() {
                         return Ok(($i.slice($i.input_len()..), $i))
                       } else {
-                        index = $i.offset(i);
+                        index = $i.offset(&i);
                       }
                     },
                     Err(e) => return Err(e)
@@ -354,6 +355,7 @@ macro_rules! escaped_transform (
 
       let cl = || -> $crate::IResult<_,_,_> {
         use $crate::Offset;
+        use $crate::InputIsEmpty;
         let mut index  = 0;
         let mut res = $i.new_builder();
         let control_char = $control_char.as_char();
@@ -363,10 +365,10 @@ macro_rules! escaped_transform (
           match $normal!(remainder, $($args)*) {
             Ok((i,o)) => {
               o.extend_into(&mut res);
-              if i.is_empty() {
+              if i.input_is_empty() {
                 return Ok(($i.slice($i.input_len()..), res));
               } else {
-                index = $i.offset(i);
+                index = $i.offset(&i);
               }
             },
             Err(Err::Incomplete(i)) => {
@@ -387,10 +389,10 @@ macro_rules! escaped_transform (
                   match $transform!($i.slice(next..), $($args2)*) {
                     Ok((i,o)) => {
                       o.extend_into(&mut res);
-                      if i.is_empty() {
+                      if i.input_is_empty() {
                         return Ok(($i.slice($i.input_len()..), res))
                       } else {
-                        index = $i.offset(i);
+                        index = $i.offset(&i);
                       }
                     },
                     Err(Err::Error(e)) => {
@@ -1326,6 +1328,34 @@ mod tests {
     assert_eq!(esc3("ab␛ncd;"), Ok((";", "ab␛ncd")));
   }
 
+  #[test]
+  fn escaping_complete() {
+    named!(esc<CompleteStr, CompleteStr>, escaped!(call!(alpha), '\\', one_of!("\"n\\")));
+    assert_eq!(
+      esc(CompleteStr("abcd;")),
+      Ok((CompleteStr(";"), CompleteStr("abcd")))
+    );
+    assert_eq!(esc(CompleteStr("ab\\\"cd;")), Ok((CompleteStr(";"), CompleteStr("ab\\\"cd"))));
+    assert_eq!(esc(CompleteStr("\\\"abcd;")), Ok((CompleteStr(";"), CompleteStr("\\\"abcd"))));
+    assert_eq!(esc(CompleteStr("\\n;")), Ok((CompleteStr(";"), CompleteStr("\\n"))));
+    assert_eq!(esc(CompleteStr("ab\\\"12")), Ok((CompleteStr("12"), CompleteStr("ab\\\""))));
+    assert_eq!(esc(CompleteStr("AB\\")), Err(Err::Error(error_position!(CompleteStr("AB\\"), ErrorKind::Escaped))));
+    assert_eq!(
+      esc(CompleteStr("AB\\A")),
+      Err(Err::Error(error_node_position!(
+        CompleteStr("AB\\A"),
+        ErrorKind::Escaped,
+        error_position!(CompleteStr("A"), ErrorKind::OneOf)
+      )))
+    );
+
+    named!(esc2<CompleteStr, CompleteStr>, escaped!(call!(digit), '\\', one_of!("\"n\\")));
+    assert_eq!(esc2(CompleteStr("12\\nnn34")), Ok((CompleteStr("nn34"), CompleteStr("12\\n"))));
+
+    named!(esc3<CompleteStr, CompleteStr>, escaped!(call!(alpha), '\u{241b}', one_of!("\"n")));
+    assert_eq!(esc3(CompleteStr("ab␛ncd;")), Ok((CompleteStr(";"), CompleteStr("ab␛ncd"))));
+  }
+
   #[cfg(feature = "verbose-errors")]
   fn to_s(i: Vec<u8>) -> String {
     String::from_utf8_lossy(&i).into_owned()
@@ -1411,6 +1441,55 @@ mod tests {
         tag!("0") => { |_| "\0" } |
         tag!("n") => { |_| "\n" })));
     assert_eq!(esc3("a␛0bc␛n"), Ok(("", String::from("a\0bc\n"))));
+  }
+
+  #[cfg(feature = "std")]
+  #[test]
+  fn escape_transform_complete() {
+
+    named!(esc<CompleteStr, String>, escaped_transform!(alpha, '\\',
+      alt!(
+          tag!("\\")       => { |_| "\\" }
+        | tag!("\"")       => { |_| "\"" }
+        | tag!("n")        => { |_| "\n" }
+      ))
+    );
+
+    assert_eq!(
+      esc(CompleteStr("abcd;")),
+      Ok((CompleteStr(";"), String::from("abcd")))
+    );
+    assert_eq!(esc(CompleteStr("ab\\\"cd;")), Ok((CompleteStr(";"), String::from("ab\"cd"))));
+    assert_eq!(esc(CompleteStr("\\\"abcd;")), Ok((CompleteStr(";"), String::from("\"abcd"))));
+    assert_eq!(esc(CompleteStr("\\n;")), Ok((CompleteStr(";"), String::from("\n"))));
+    assert_eq!(esc(CompleteStr("ab\\\"12")), Ok((CompleteStr("12"), String::from("ab\""))));
+    assert_eq!(esc(CompleteStr("AB\\")), Err(Err::Error(error_position!(CompleteStr("AB\\"), ErrorKind::EscapedTransform))));
+    assert_eq!(
+        esc(CompleteStr("AB\\A")),
+        Err(Err::Error(error_node_position!(
+            CompleteStr("AB\\A"),
+            ErrorKind::EscapedTransform,
+            error_position!(CompleteStr("A"), ErrorKind::Alt)
+        )))
+    );
+
+    named!(esc2<CompleteStr, String>, escaped_transform!(alpha, '&',
+        alt!(
+            tag!("egrave;") => { |_| "è" }
+            | tag!("agrave;") => { |_| "à" }
+        ))
+    );
+    assert_eq!(esc2(CompleteStr("ab&egrave;DEF;")), Ok((CompleteStr(";"), String::from("abèDEF"))));
+    assert_eq!(
+        esc2(CompleteStr("ab&egrave;D&agrave;EF;")),
+        Ok((CompleteStr(";"), String::from("abèDàEF")))
+    );
+
+    named!(esc3<CompleteStr, String>, escaped_transform!(alpha, '␛',
+    alt!(
+        tag!("0") => { |_| "\0" } |
+        tag!("n") => { |_| "\n" })));
+    assert_eq!(esc3(CompleteStr("a␛0bc␛n")), Ok((CompleteStr(""), String::from("a\0bc\n"))));
   }
 
   #[test]

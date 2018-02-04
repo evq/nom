@@ -1,4 +1,5 @@
-use traits::{AtEof, Compare, CompareResult, InputLength, InputIter, InputTake, Slice, FindSubstring, FindToken, ParseTo};
+use traits::{AtEof, Compare, CompareResult, ExtendInto, FindSubstring, FindToken, InputIsEmpty, InputIter, InputLength, InputTake,
+             ParseTo, Slice};
 use util::Offset;
 
 use std::str::{self, FromStr, Chars, CharIndices};
@@ -126,6 +127,26 @@ impl<'a> Offset for CompleteStr<'a> {
   }
 }
 
+impl<'a> InputIsEmpty for CompleteStr<'a> {
+  fn input_is_empty(&self) -> bool {
+    self.0.is_empty()
+  }
+}
+
+#[cfg(feature = "std")]
+impl<'a> ExtendInto for CompleteStr<'a> {
+  type Item = char;
+  type Extender = String;
+
+  #[inline]
+  fn new_builder(&self) -> String {
+    String::new()
+  }
+  #[inline]
+  fn extend_into(&self, acc: &mut String) {
+    acc.push_str(self.0);
+  }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Hash)]
 pub struct CompleteByteSlice<'a>(pub &'a [u8]);
